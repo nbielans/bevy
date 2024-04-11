@@ -197,3 +197,88 @@ impl Clusters {
         self.lights.clear();
     }
 }
+
+pub struct ViewClusterPlugin;
+
+impl Plugin for ViewClusterPlugin {
+    fn build(&self, app: &mut App) {
+        load_internal_asset!(
+            app,
+            CLUSTERED_FORWARD_HANDLE,
+            "../render/clustered_forward.wgsl",
+            Shader::from_wgsl
+        );
+        app.register_type::<ClusterConfig>()
+            .configure_sets(
+                PostUpdate,
+                (
+                    SimulationLightSystems::AddClusters,
+                    SimulationLightSystems::AssignLightsToClusters,
+                )
+                    .chain(),
+            )
+            .add_systems(
+                PostUpdate,
+                (
+                    add_clusters.in_set(SimulationLightSystems::AddClusters),
+                    assign_lights_to_clusters
+                        .in_set(SimulationLightSystems::AssignLightsToClusters)
+                        .after(TransformSystem::TransformPropagate)
+                        .after(VisibilitySystems::CheckVisibility)
+                        .after(CameraUpdateSystem),
+                    (
+                        clear_directional_light_cascades,
+                        build_directional_light_cascades::<Projection>,
+                    )
+                        .chain()
+                        .in_set(SimulationLightSystems::UpdateDirectionalLightCascades)
+                        .after(TransformSystem::TransformPropagate)
+                        .after(CameraUpdateSystem),
+                    update_directional_light_frusta
+                        .in_set(SimulationLightSystems::UpdateLightFrusta)
+                        // This must run after CheckVisibility because it relies on `ViewVisibility`
+                        .after(VisibilitySystems::CheckVisibility)
+                        .after(TransformSystem::TransformPropagate)
+                        .after(SimulationLightSystems::UpdateDirectionalLightCascades)
+                        // We assume that no entity will be both a directional light and a spot light,
+                        // so these systems will run independently of one another.
+                        // FIXME: Add an archetype invariant for this https://github.com/bevyengine/bevy/issues/1481.
+                        .ambiguous_with(update_spot_light_frusta),
+                    update_point_light_frusta
+                        .in_set(SimulationLightSystems::UpdateLightFrusta)
+                        .after(TransformSystem::TransformPropagate)
+                        .after(SimulationLightSystems::AssignLightsToClusters),
+                    update_spot_light_frusta
+                        .in_set(SimulationLightSystems::UpdateLightFrusta)
+                        .after(TransformSystem::TransformPropagate)
+                        .after(SimulationLightSystems::AssignLightsToClusters),
+                    check_light_mesh_visibility
+                        .in_set(SimulationLightSystems::CheckLightVisibility)
+                        .after(VisibilitySystems::CalculateBounds)
+                        .after(TransformSystem::TransformPropagate)
+                        .after(SimulationLightSystems::UpdateLightFrusta)
+                        // NOTE: This MUST be scheduled AFTER the core renderer visibility check
+                        // because that resets entity `ViewVisibility` for the first view
+                        // which would override any results from this otherwise
+                        .after(VisibilitySystems::CheckVisibility),
+                ),
+            );
+
+        let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+
+        // Extract the required data from the main world
+        render_app
+            .add_systems(ExtractSchedule, (extract_clusters, extract_lights))
+            .add_systems(
+                Render,
+                (
+                    prepare_lights
+                        .in_set(RenderSet::ManageViews)
+                        .after(prepare_assets::<Image>),
+                    prepare_clusters.in_set(RenderSet::PrepareResources),
+                ),
+            );
+    }
+}

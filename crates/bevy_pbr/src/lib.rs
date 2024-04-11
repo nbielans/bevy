@@ -159,12 +159,7 @@ impl Plugin for PbrPlugin {
             Shader::from_wgsl
         );
         load_internal_asset!(app, UTILS_HANDLE, "render/utils.wgsl", Shader::from_wgsl);
-        load_internal_asset!(
-            app,
-            CLUSTERED_FORWARD_HANDLE,
-            "render/clustered_forward.wgsl",
-            Shader::from_wgsl
-        );
+
         load_internal_asset!(
             app,
             PBR_LIGHTING_HANDLE,
@@ -262,7 +257,6 @@ impl Plugin for PbrPlugin {
             .register_type::<AmbientLight>()
             .register_type::<CascadeShadowConfig>()
             .register_type::<CascadesVisibleEntities>()
-            .register_type::<ClusterConfig>()
             .register_type::<CubemapVisibleEntities>()
             .register_type::<DirectionalLight>()
             .register_type::<DirectionalLightShadowMap>()
@@ -292,61 +286,7 @@ impl Plugin for PbrPlugin {
                 ExtractComponentPlugin::<ShadowFilteringMethod>::default(),
                 LightmapPlugin,
                 LightProbePlugin,
-            ))
-            .configure_sets(
-                PostUpdate,
-                (
-                    SimulationLightSystems::AddClusters,
-                    SimulationLightSystems::AssignLightsToClusters,
-                )
-                    .chain(),
-            )
-            .add_systems(
-                PostUpdate,
-                (
-                    add_clusters.in_set(SimulationLightSystems::AddClusters),
-                    assign_lights_to_clusters
-                        .in_set(SimulationLightSystems::AssignLightsToClusters)
-                        .after(TransformSystem::TransformPropagate)
-                        .after(VisibilitySystems::CheckVisibility)
-                        .after(CameraUpdateSystem),
-                    (
-                        clear_directional_light_cascades,
-                        build_directional_light_cascades::<Projection>,
-                    )
-                        .chain()
-                        .in_set(SimulationLightSystems::UpdateDirectionalLightCascades)
-                        .after(TransformSystem::TransformPropagate)
-                        .after(CameraUpdateSystem),
-                    update_directional_light_frusta
-                        .in_set(SimulationLightSystems::UpdateLightFrusta)
-                        // This must run after CheckVisibility because it relies on `ViewVisibility`
-                        .after(VisibilitySystems::CheckVisibility)
-                        .after(TransformSystem::TransformPropagate)
-                        .after(SimulationLightSystems::UpdateDirectionalLightCascades)
-                        // We assume that no entity will be both a directional light and a spot light,
-                        // so these systems will run independently of one another.
-                        // FIXME: Add an archetype invariant for this https://github.com/bevyengine/bevy/issues/1481.
-                        .ambiguous_with(update_spot_light_frusta),
-                    update_point_light_frusta
-                        .in_set(SimulationLightSystems::UpdateLightFrusta)
-                        .after(TransformSystem::TransformPropagate)
-                        .after(SimulationLightSystems::AssignLightsToClusters),
-                    update_spot_light_frusta
-                        .in_set(SimulationLightSystems::UpdateLightFrusta)
-                        .after(TransformSystem::TransformPropagate)
-                        .after(SimulationLightSystems::AssignLightsToClusters),
-                    check_light_mesh_visibility
-                        .in_set(SimulationLightSystems::CheckLightVisibility)
-                        .after(VisibilitySystems::CalculateBounds)
-                        .after(TransformSystem::TransformPropagate)
-                        .after(SimulationLightSystems::UpdateLightFrusta)
-                        // NOTE: This MUST be scheduled AFTER the core renderer visibility check
-                        // because that resets entity `ViewVisibility` for the first view
-                        // which would override any results from this otherwise
-                        .after(VisibilitySystems::CheckVisibility),
-                ),
-            );
+            ));
 
         if self.add_default_deferred_lighting_plugin {
             app.add_plugins(DeferredPbrLightingPlugin);
@@ -366,18 +306,7 @@ impl Plugin for PbrPlugin {
         };
 
         // Extract the required data from the main world
-        render_app
-            .add_systems(ExtractSchedule, (extract_clusters, extract_lights))
-            .add_systems(
-                Render,
-                (
-                    prepare_lights
-                        .in_set(RenderSet::ManageViews)
-                        .after(prepare_assets::<Image>),
-                    prepare_clusters.in_set(RenderSet::PrepareResources),
-                ),
-            )
-            .init_resource::<LightMeta>();
+        render_app.init_resource::<LightMeta>();
 
         let shadow_pass_node = ShadowPassNode::new(&mut render_app.world);
         let mut graph = render_app.world.resource_mut::<RenderGraph>();
